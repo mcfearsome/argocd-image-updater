@@ -61,7 +61,6 @@ type WriteBackTargetType int
 const (
 	WriteBackTargetKustomization  WriteBackTargetType = 0
 	WriteBackTargetHelm           WriteBackTargetType = 1
-	WriteBackTargetHelmValues     WriteBackTargetType = 2
 	WriteBackTargetTemplateValues WriteBackTargetType = 3
 )
 
@@ -77,6 +76,7 @@ type WriteBackConfig struct {
 	GitCommitUser      string
 	GitCommitEmail     string
 	GitCommitMessage   string
+	GitRepo          	 string
 	KustomizeBase      string
 	ValuesTemplate     string
 	Target             string
@@ -665,7 +665,6 @@ func commitChanges(app *v1alpha1.Application, wbc *WriteBackConfig, changeList [
 			return err
 		}
 	case WriteBackGit:
-		fmt.Printf("#########################\n%v\n#########################\n", wbc.TargetChangeWriter)
 		return commitChangesGit(app, wbc, changeList, wbc.TargetChangeWriter)
 	default:
 		return fmt.Errorf("unknown write back method set: %d", wbc.Method)

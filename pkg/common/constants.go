@@ -59,7 +59,6 @@ const (
 	WriteBackTemplateBuildCacheAnnotation = ImageUpdaterAnnotationPrefix + "write-back-template-cache"
 	KustomizationPrefix                   = "kustomization"
 	HelmPrefix                            = "helm"
-	HelmValuesPrefix                      = "values"
 	TemplatePrefix                        = "template"
 )
 
