@@ -665,6 +665,7 @@ func commitChanges(app *v1alpha1.Application, wbc *WriteBackConfig, changeList [
 			return err
 		}
 	case WriteBackGit:
+		fmt.Printf("#########################\n%v\n#########################\n", wbc.TargetChangeWriter)
 		return commitChangesGit(app, wbc, changeList, wbc.TargetChangeWriter)
 	default:
 		return fmt.Errorf("unknown write back method set: %d", wbc.Method)
