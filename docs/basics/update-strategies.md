@@ -16,6 +16,7 @@ The following update strategies are currently supported:
 * [semver](#strategy-semver) - Update to the latest version of an image
   considering semantic versioning constraints
 * [latest/newest-build](#strategy-latest) - Update to the most recently built image found in a registry
+* [latest/newest-build](#strategy-latest) - Update to the most recently built image found in a registry
 * [digest](#strategy-digest) - Update to the latest version of a given version (tag), using the tag's SHA digest
 * [name/alphabetical](#strategy-name) - Sorts tags alphabetically and update to the one with the highest cardinality
 
