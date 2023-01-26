@@ -37,7 +37,7 @@ jobs:
           flavor: |
             latest=auto
           images: |
-            ghcr.io/${{ github.repository }}/argocd-image-updater
+            ${{ env.REGISTRY }}/${{ github.repository }}/argocd-image-updater
           tags: |
             type=schedule
             type=semver,pattern={{version}}
@@ -45,14 +45,14 @@ jobs:
             type=semver,pattern={{major}}
             type=ref,event=branch,suffix=-{{date 'YYYYMMDDHHmmss'}}
             type=ref,event=pr,suffix=-{{date 'YYYYMMDDHHmmss'}}
-            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'master') }}
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
             type=sha
 
       - name: Build and push
         uses: docker/build-push-action@v3
         with:
           context: .
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64
