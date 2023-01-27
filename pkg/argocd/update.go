@@ -103,9 +103,12 @@ type helmOverride struct {
 }
 
 type valuesImage struct {
-	Repository string `json:"repository"`
-	Tag        string `json:"tag"`
-	Alias      string
+	Repository  string `json:"repository"`
+	Tag string `json:"tag"`
+}
+
+type valuesImages struct {
+	Images []valuesImage `json:"images"`
 }
 
 type valuesOverride struct {
