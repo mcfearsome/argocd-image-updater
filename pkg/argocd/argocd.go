@@ -1,11 +1,13 @@
 package argocd
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
 
 	"github.com/argoproj-labs/argocd-image-updater/pkg/common"
 	"github.com/argoproj-labs/argocd-image-updater/pkg/image"
@@ -18,6 +20,8 @@ import (
 	"github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/miracl/conflate"
 )
 
 // Kubernetes based client
@@ -83,6 +87,7 @@ const (
 	ApplicationTypeHelm        ApplicationType = 1
 	ApplicationTypeKustomize   ApplicationType = 2
 	ApplicationTypeHelmValues  ApplicationType = 3
+	ApplicationTypeGeneric     ApplicationType = 4
 )
 
 // Basic wrapper struct for ArgoCD client options
@@ -125,6 +130,8 @@ type ApplicationImages struct {
 	Application v1alpha1.Application
 	Images      image.ContainerImageList
 }
+
+type ValuesFile map[string]interface{}
 
 // Will hold a list of applications with the images allowed to considered for
 // update.
@@ -241,6 +248,14 @@ func parseLabel(inputLabel string) (map[string]string, error) {
 		selectedLabels[fields[0]] = fields[1]
 	}
 	return selectedLabels, nil
+}
+
+func getImageValuesTemplate(annotations map[string]string) string {
+	if template, ok := annotations[common.WriteBackTemplateAnnotation]; ok {
+		return template
+	} else {
+		return common.DefaultTemplate
+	}
 }
 
 // GetApplication gets the application named appName from Argo CD API
@@ -531,6 +546,47 @@ func SetKustomizeImage(app *v1alpha1.Application, newImage *image.ContainerImage
 	return nil
 }
 
+func SetTemplateImage(app *v1alpha1.Application, newImage *image.ContainerImage, index int) error {
+	if _, ok := app.Annotations[common.WriteBackTemplateBuildCacheAnnotation]; !ok {
+		app.Annotations[common.WriteBackTemplateBuildCacheAnnotation] = ""
+	}
+	cached := []byte(app.Annotations[common.WriteBackTemplateBuildCacheAnnotation])
+
+	data := struct {
+		Index      int
+		Alias      string
+		Repository string
+		Tag        string
+	}{
+		Index:      index,
+		Alias:      newImage.ImageAlias,
+		Repository: newImage.GetFullNameWithoutTag(),
+		Tag:        newImage.ImageTag.String(),
+	}
+
+	tmpl := getImageValuesTemplate(app.Annotations)
+	var b bytes.Buffer
+
+	t := template.Must(template.New("template").Parse(tmpl))
+	err := t.Execute(&b, data)
+	if err != nil {
+		return err
+	}
+
+	c, err := conflate.FromData(cached, b.Bytes())
+	if err != nil {
+		return err
+	}
+	newYaml, err := c.MarshalYAML()
+	if err != nil {
+		return err
+	}
+
+	app.Annotations[common.WriteBackTemplateBuildCacheAnnotation] = string(newYaml)
+
+	return nil
+}
+
 // GetImagesFromApplication returns the list of known images for the given application
 func GetImagesFromApplication(app *v1alpha1.Application) image.ContainerImageList {
 	images := make(image.ContainerImageList, 0)
@@ -575,6 +631,11 @@ func IsValidApplicationType(app *v1alpha1.Application) bool {
 
 // getApplicationType returns the type of the application
 func getApplicationType(app *v1alpha1.Application) ApplicationType {
+	if st, set := app.Annotations[common.WriteBackTargetAnnotation]; set &&
+		strings.HasPrefix(st, common.TemplatePrefix) {
+		return ApplicationTypeGeneric
+	}
+
 	sourceType := app.Status.SourceType
 	if st, set := app.Annotations[common.WriteBackTargetAnnotation]; set &&
 		strings.HasPrefix(st, common.KustomizationPrefix) {
@@ -588,6 +649,7 @@ func getApplicationType(app *v1alpha1.Application) ApplicationType {
 		strings.HasPrefix(st, common.HelmValuesPrefix) {
 		sourceType = v1alpha1.ApplicationSourceTypeHelm
 	}
+
 	if sourceType == v1alpha1.ApplicationSourceTypeKustomize {
 		return ApplicationTypeKustomize
 	} else if sourceType == v1alpha1.ApplicationSourceTypeHelm {
