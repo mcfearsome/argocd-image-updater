@@ -5,12 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"github.com/argoproj-labs/argocd-image-updater/pkg/common"
-	"github.com/miracl/conflate"
 	"os"
 	"path"
 	"path/filepath"
 	"text/template"
+
+	"github.com/argoproj-labs/argocd-image-updater/pkg/common"
+	"github.com/miracl/conflate"
 
 	"sigs.k8s.io/kustomize/api/konfig"
 	"sigs.k8s.io/kustomize/api/types"
@@ -355,7 +356,9 @@ func writeValuesTemplate(app *v1alpha1.Application, wbc *WriteBackConfig, gitC g
 	} else {
 		c = conflate.New()
 	}
-	c.AddData(yamlToMerge)
+	if err = c.AddData(yamlToMerge); err != nil {
+		return
+	}
 
 	newYaml, err := c.MarshalYAML()
 	if err != nil {

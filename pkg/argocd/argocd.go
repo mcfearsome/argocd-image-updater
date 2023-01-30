@@ -4,15 +4,16 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"text/template"
+
 	"github.com/argoproj-labs/argocd-image-updater/pkg/common"
 	"github.com/argoproj-labs/argocd-image-updater/pkg/image"
 	"github.com/argoproj-labs/argocd-image-updater/pkg/kube"
 	"github.com/argoproj-labs/argocd-image-updater/pkg/log"
 	"github.com/argoproj-labs/argocd-image-updater/pkg/metrics"
-	"os"
-	"path/filepath"
-	"strings"
-	"text/template"
 
 	argocdclient "github.com/argoproj/argo-cd/v2/pkg/apiclient"
 	"github.com/argoproj/argo-cd/v2/pkg/apiclient/application"
@@ -249,11 +250,11 @@ func parseLabel(inputLabel string) (map[string]string, error) {
 	return selectedLabels, nil
 }
 
-func getImageValuesTemplate(annotations map[string]string) (string, error) {
+func getImageValuesTemplate(annotations map[string]string) string {
 	if template, ok := annotations[common.WriteBackTemplateAnnotation]; ok {
-		return template, nil
+		return template
 	} else {
-		return common.DefaultTemplate, nil
+		return common.DefaultTemplate
 	}
 }
 
@@ -563,14 +564,14 @@ func SetTemplateImage(app *v1alpha1.Application, newImage *image.ContainerImage,
 		Tag:        newImage.ImageTag.String(),
 	}
 
-	tmpl, err := getImageValuesTemplate(app.Annotations)
-	if err != nil {
-		return err
-	}
+	tmpl := getImageValuesTemplate(app.Annotations)
 	var b bytes.Buffer
 
 	t := template.Must(template.New("template").Parse(tmpl))
-	t.Execute(&b, data)
+	err := t.Execute(&b, data)
+	if err != nil {
+		return err
+	}
 
 	c, err := conflate.FromData(cached, b.Bytes())
 	if err != nil {
