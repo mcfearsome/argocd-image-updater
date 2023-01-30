@@ -14,6 +14,10 @@ import (
 	"github.com/argoproj-labs/argocd-image-updater/pkg/kube"
 	"github.com/argoproj-labs/argocd-image-updater/pkg/log"
 	"github.com/argoproj-labs/argocd-image-updater/pkg/metrics"
+	"os"
+	"path/filepath"
+	"strings"
+	"text/template"
 
 	argocdclient "github.com/argoproj/argo-cd/v2/pkg/apiclient"
 	"github.com/argoproj/argo-cd/v2/pkg/apiclient/application"
@@ -250,7 +254,7 @@ func parseLabel(inputLabel string) (map[string]string, error) {
 	return selectedLabels, nil
 }
 
-func getImageValuesTemplate(annotations map[string]string) string {
+func getImageValuesTemplate(annotations map[string]string) (string) {
 	if template, ok := annotations[common.WriteBackTemplateAnnotation]; ok {
 		return template
 	} else {
@@ -661,6 +665,7 @@ func getApplicationType(app *v1alpha1.Application) ApplicationType {
 		strings.HasPrefix(st, common.HelmValuesPrefix) {
 		sourceType = v1alpha1.ApplicationSourceTypeHelm
 	}
+
 	if sourceType == v1alpha1.ApplicationSourceTypeKustomize {
 		return ApplicationTypeKustomize
 	} else if sourceType == v1alpha1.ApplicationSourceTypeHelm {
