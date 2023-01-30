@@ -108,10 +108,6 @@ type valuesImage struct {
 	Alias      string
 }
 
-type valuesImages struct {
-	Images []valuesImage `json:"images"`
-}
-
 type valuesOverride struct {
 	Image valuesImage `json:"image"`
 }

@@ -5,8 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"github.com/argoproj-labs/argocd-image-updater/pkg/common"
-	"github.com/miracl/conflate"
 	"os"
 	"path"
 	"path/filepath"
