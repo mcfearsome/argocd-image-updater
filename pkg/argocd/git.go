@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/argoproj-labs/argocd-image-updater/pkg/common"
+	"github.com/miracl/conflate"
 	"os"
 	"path"
 	"path/filepath"
@@ -324,6 +326,51 @@ func writeKustomization(app *v1alpha1.Application, wbc *WriteBackConfig, gitC gi
 	}
 
 	return nil, false
+}
+
+func writeValuesTemplate(app *v1alpha1.Application, wbc *WriteBackConfig, gitC git.Client) (err error, skip bool) {
+	//logCtx := log.WithContext().AddField("application", app.GetName())
+	targetExists := true
+	targetFile := path.Join(gitC.Root(), wbc.TargetBase)
+	_, err = os.Stat(targetFile)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return
+		} else {
+			targetExists = false
+		}
+	}
+
+	yamlToMerge := []byte(app.Annotations[common.WriteBackTemplateBuildCacheAnnotation])
+
+	// If the target file already exist in the repository, we will check whether
+	// our generated new file is the same as the existing one, and if yes, we
+	// don't proceed further for commit.
+	var c *conflate.Conflate
+	if targetExists {
+		c, err = conflate.FromFiles(targetFile)
+		if err != nil {
+			return
+		}
+	} else {
+		c = conflate.New()
+	}
+	c.AddData(yamlToMerge)
+
+	newYaml, err := c.MarshalYAML()
+	if err != nil {
+		return
+	}
+
+	err = os.WriteFile(targetFile, newYaml, 0600)
+	if err != nil {
+		return
+	}
+
+	if !targetExists {
+		err = gitC.Add(targetFile)
+	}
+	return
 }
 
 func imagesFilter(images v1alpha1.KustomizeImages) (kyaml.Filter, error) {

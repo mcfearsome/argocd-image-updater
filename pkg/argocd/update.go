@@ -57,9 +57,10 @@ const (
 type WriteBackTargetType int
 
 const (
-	WriteBackTargetKustomization WriteBackTargetType = 0
-	WriteBackTargetHelm          WriteBackTargetType = 1
-	WriteBackTargetHelmValues				 WriteBackTargetType = 2
+	WriteBackTargetKustomization  WriteBackTargetType = 0
+	WriteBackTargetHelm           WriteBackTargetType = 1
+	WriteBackTargetHelmValues     WriteBackTargetType = 2
+	WriteBackTargetTemplateValues WriteBackTargetType = 3
 )
 
 // WriteBackConfig holds information on how to write back the changes to an Application
@@ -75,6 +76,7 @@ type WriteBackConfig struct {
 	GitCommitEmail     string
 	GitCommitMessage   string
 	KustomizeBase      string
+	ValuesTemplate     string
 	Target             string
 	TargetBase         string
 	TargetType         WriteBackTargetType
@@ -99,8 +101,9 @@ type helmOverride struct {
 }
 
 type valuesImage struct {
-	Repository  string `json:"repository"`
-	Tag string `json:"tag"`
+	Repository string `json:"repository"`
+	Tag        string `json:"tag"`
+	Alias      string
 }
 
 type valuesImages struct {
@@ -109,6 +112,10 @@ type valuesImages struct {
 
 type valuesOverride struct {
 	Image valuesImage `json:"image"`
+}
+
+type templateValuesParameters struct {
+	Params []valuesImage `json:"params"`
 }
 
 // ChangeEntry represents an image that has been changed by Image Updater
@@ -168,13 +175,18 @@ func UpdateApplication(updateConf *UpdateConfiguration, state *SyncIterationStat
 
 	result.NumApplicationsProcessed += 1
 
+	wbc, err := getWriteBackConfig(&updateConf.UpdateApp.Application, updateConf.KubeClient, updateConf.ArgoClient)
+	if err != nil {
+		return result
+	}
+
 	// Loop through all images of current application, and check whether one of
 	// its images is eligible for updating.
 	//
 	// Whether an image qualifies for update is dependent on semantic version
 	// constraints which are part of the application's annotation values.
 	//
-	for _, applicationImage := range updateConf.UpdateApp.Images {
+	for i, applicationImage := range updateConf.UpdateApp.Images {
 		updateableImage := applicationImages.ContainsImage(applicationImage, false)
 		if updateableImage == nil {
 			log.WithContext().AddField("application", app).Debugf("Image '%s' seems not to be live in this application, skipping", applicationImage.ImageName)
@@ -302,8 +314,9 @@ func UpdateApplication(updateConf *UpdateConfiguration, state *SyncIterationStat
 
 			imgCtx.Infof("Setting new image to %s", applicationImage.WithTag(latest).GetFullNameWithTag())
 			needUpdate = true
+			applicationImage.ImageAlias = updateableImage.ImageAlias
 
-			err = setAppImage(&updateConf.UpdateApp.Application, applicationImage.WithTag(latest))
+			err = setAppImage(&updateConf.UpdateApp.Application, applicationImage.WithTag(latest), i)
 
 			if err != nil {
 				imgCtx.Errorf("Error while trying to update image: %v", err)
@@ -319,18 +332,13 @@ func UpdateApplication(updateConf *UpdateConfiguration, state *SyncIterationStat
 			// We need to explicitly set the up-to-date images in the spec too, so
 			// that we correctly marshal out the parameter overrides to include all
 			// images, regardless of those were updated or not.
-			err = setAppImage(&updateConf.UpdateApp.Application, applicationImage.WithTag(updateableImage.ImageTag))
+			err = setAppImage(&updateConf.UpdateApp.Application, applicationImage.WithTag(updateableImage.ImageTag), i)
 			if err != nil {
 				imgCtx.Errorf("Error while trying to update image: %v", err)
 				result.NumErrors += 1
 			}
 			imgCtx.Debugf("Image '%s' already on latest allowed version", updateableImage.GetFullNameWithTag())
 		}
-	}
-
-	wbc, err := getWriteBackConfig(&updateConf.UpdateApp.Application, updateConf.KubeClient, updateConf.ArgoClient)
-	if err != nil {
-		return result
 	}
 
 	if wbc.Method == WriteBackGit {
@@ -385,7 +393,7 @@ func needsUpdate(updateableImage *image.ContainerImage, applicationImage *image.
 	return !updateableImage.ImageTag.Equals(latest) || applicationImage.KustomizeImage != nil && applicationImage.DiffersFrom(updateableImage, false)
 }
 
-func setAppImage(app *v1alpha1.Application, img *image.ContainerImage) error {
+func setAppImage(app *v1alpha1.Application, img *image.ContainerImage, index int) error {
 	var err error
 	if appType := GetApplicationType(app); appType == ApplicationTypeKustomize {
 		err = SetKustomizeImage(app, img)
@@ -393,6 +401,8 @@ func setAppImage(app *v1alpha1.Application, img *image.ContainerImage) error {
 		err = SetHelmImage(app, img)
 	} else if appType == ApplicationTypeHelmValues {
 		err = SetHelmValuesImage(app, img)
+	} else if appType == ApplicationTypeGeneric {
+		err = SetTemplateImage(app, img, index)
 	} else {
 		err = fmt.Errorf("could not update application %s - neither Helm nor Kustomize application", app)
 	}
@@ -431,11 +441,27 @@ func marshalParamsOverride(app *v1alpha1.Application) ([]byte, error) {
 		if app.Spec.Source.Helm == nil {
 			return []byte{}, nil
 		}
+
 		params := valuesOverride{
 			Image: valuesImage{
 				Repository: app.Spec.Source.Helm.Parameters[0].Value,
-				Tag: app.Spec.Source.Helm.Parameters[1].Value,
+				Tag:        app.Spec.Source.Helm.Parameters[1].Value,
 			},
+		}
+		override, err = yaml.Marshal(params)
+	case ApplicationTypeGeneric:
+		params := templateValuesParameters{
+			Params: []valuesImage{},
+		}
+
+		for i, v := range app.Spec.Source.Helm.Parameters {
+			if i%2 == 0 {
+				param := valuesImage{
+					Repository: v.Value,
+					Tag:        app.Spec.Source.Helm.Parameters[i+1].Value,
+				}
+				params.Params = append(params.Params, param)
+			}
 		}
 		override, err = yaml.Marshal(params)
 	default:
@@ -474,10 +500,13 @@ func getWriteBackConfig(app *v1alpha1.Application, kubeClient *kube.KubernetesCl
 	switch strings.TrimSpace(method) {
 	case "git":
 		wbc.Method = WriteBackGit
-		if target, ok := app.Annotations[common.WriteBackTargetAnnotation]; ok && (strings.HasPrefix(target, common.KustomizationPrefix) || strings.HasPrefix(target, common.HelmPrefix) || strings.HasPrefix(target, common.HelmValuesPrefix)) {
+		if target, ok := app.Annotations[common.WriteBackTargetAnnotation]; ok && (strings.HasPrefix(target, common.TemplatePrefix) || strings.HasPrefix(target, common.KustomizationPrefix) || strings.HasPrefix(target, common.HelmPrefix) || strings.HasPrefix(target, common.HelmValuesPrefix)) {
 			wbc.TargetBase, wbc.TargetType = parseTarget(target, app.Spec.Source.Path)
 			if wbc.TargetType == WriteBackTargetKustomization {
 				wbc.TargetChangeWriter = writeKustomization
+			}
+			if wbc.TargetType == WriteBackTargetTemplateValues {
+				wbc.TargetChangeWriter = writeValuesTemplate
 			}
 		}
 		if err := parseGitConfig(app, kubeClient, wbc, creds); err != nil {
@@ -497,26 +526,32 @@ func parseDefaultTarget(appName string, path string) string {
 }
 
 func parseTarget(target string, sourcePath string) (base string, targetType WriteBackTargetType) {
+	var targetLen int
 	if strings.HasPrefix(target, common.KustomizationPrefix) {
 		targetType = WriteBackTargetKustomization
-		base = baseForTargetType(target[len(common.KustomizationPrefix):], sourcePath)
+		targetLen = len(common.KustomizationPrefix)
 	} else if strings.HasPrefix(target, common.HelmPrefix) {
 		targetType = WriteBackTargetHelm
-		base = baseForTargetType(target[len(common.HelmPrefix):], sourcePath)
+		targetLen = len(common.HelmPrefix)
 	} else if strings.HasPrefix(target, common.HelmValuesPrefix) {
 		targetType = WriteBackTargetHelmValues
-		base = baseForTargetType(target[len(common.HelmValuesPrefix):], sourcePath)
+		targetLen = len(common.HelmValuesPrefix)
+	} else if strings.HasPrefix(target, common.TemplatePrefix) {
+		targetType = WriteBackTargetTemplateValues
+		targetLen = len(common.TemplatePrefix)
 	} else {
 		targetType = WriteBackTargetHelm
 		base = filepath.Join(sourcePath, ".")
+		return
 	}
+	base = baseForTargetType(target[targetLen:], sourcePath)
 	return
 }
 
 func baseForTargetType(trimmedTarget, sourcePath string) (target string) {
 	if trimmedTarget == "" {
 		target = filepath.Join(sourcePath, ".")
-	} else if target = trimmedTarget[1:]; target[0:1] ==  "/" {
+	} else if target = trimmedTarget[1:]; target[0:1] == "/" {
 		target = target[1:]
 	} else {
 		target = filepath.Join(sourcePath, target)
