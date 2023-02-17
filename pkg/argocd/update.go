@@ -309,8 +309,13 @@ func UpdateApplication(updateConf *UpdateConfiguration, state *SyncIterationStat
 		if needsUpdate(updateableImage, applicationImage, latest) {
 
 			imgCtx.Infof("Setting new image to %s", applicationImage.WithTag(latest).GetFullNameWithTag())
+			imgCtx.Infof("applicationImage.ImageAlias: %s", applicationImage.ImageAlias)
+			imgCtx.Infof("updateableImage.ImageAlias: %s", updateableImage.ImageAlias)
+
 			needUpdate = true
-			applicationImage.ImageAlias = updateableImage.ImageAlias
+			if updateableImage.ImageAlias != "" {
+				applicationImage.ImageAlias = updateableImage.ImageAlias
+			}
 
 			err = setAppImage(&updateConf.UpdateApp.Application, applicationImage.WithTag(latest), i)
 
