@@ -550,6 +550,13 @@ func SetTemplateImage(app *v1alpha1.Application, newImage *image.ContainerImage,
 	if _, ok := app.Annotations[common.WriteBackTemplateBuildCacheAnnotation]; !ok {
 		app.Annotations[common.WriteBackTemplateBuildCacheAnnotation] = ""
 	}
+	logCtx := log.WithContext().
+		AddField("application", app).
+		AddField("image", newImage).
+		AddField("index", index).
+		AddField("image_tag", newImage.ImageTag).
+		AddField("alias", newImage.ImageAlias)
+
 	cached := []byte(app.Annotations[common.WriteBackTemplateBuildCacheAnnotation])
 
 	data := struct {
@@ -565,6 +572,8 @@ func SetTemplateImage(app *v1alpha1.Application, newImage *image.ContainerImage,
 	}
 
 	tmpl := getImageValuesTemplate(app.Annotations)
+	logCtx.Infof("Using template:\n%s", tmpl)
+
 	var b bytes.Buffer
 
 	t := template.Must(template.New("template").Parse(tmpl))
@@ -574,11 +583,14 @@ func SetTemplateImage(app *v1alpha1.Application, newImage *image.ContainerImage,
 	}
 
 	c, err := conflate.FromData(cached, b.Bytes())
+	logCtx.Infof("Conflate result:\n%s", c)
 	if err != nil {
 		return err
 	}
+
 	newYaml, err := c.MarshalYAML()
 	if err != nil {
+		logCtx.Errorf("Failed to marshal YAML: %v", err)
 		return err
 	}
 

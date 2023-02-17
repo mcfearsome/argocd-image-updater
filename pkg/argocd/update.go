@@ -391,6 +391,13 @@ func needsUpdate(updateableImage *image.ContainerImage, applicationImage *image.
 
 func setAppImage(app *v1alpha1.Application, img *image.ContainerImage, index int) error {
 	var err error
+	logCtx := log.WithContext().
+			AddField("application", app).
+			AddField("image", img).
+			AddField("index", index).
+			AddField("image_tag", img.ImageTag).
+			AddField("alias", img.ImageAlias)
+
 	if appType := GetApplicationType(app); appType == ApplicationTypeKustomize {
 		err = SetKustomizeImage(app, img)
 	} else if appType == ApplicationTypeHelm {
@@ -398,6 +405,7 @@ func setAppImage(app *v1alpha1.Application, img *image.ContainerImage, index int
 	} else if appType == ApplicationTypeHelmValues {
 		err = SetHelmValuesImage(app, img)
 	} else if appType == ApplicationTypeGeneric {
+		logCtx.Infof("Using Generic ApplicationType")
 		err = SetTemplateImage(app, img, index)
 	} else {
 		err = fmt.Errorf("could not update application %s - neither Helm nor Kustomize application", app)
