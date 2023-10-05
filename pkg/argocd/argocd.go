@@ -657,18 +657,11 @@ func getApplicationType(app *v1alpha1.Application) ApplicationType {
 		strings.HasPrefix(st, common.HelmPrefix) {
 		sourceType = v1alpha1.ApplicationSourceTypeHelm
 	}
-	if st, set := app.Annotations[common.WriteBackTargetAnnotation]; set &&
-		strings.HasPrefix(st, common.HelmValuesPrefix) {
-		sourceType = v1alpha1.ApplicationSourceTypeHelm
-	}
+
 
 	if sourceType == v1alpha1.ApplicationSourceTypeKustomize {
 		return ApplicationTypeKustomize
 	} else if sourceType == v1alpha1.ApplicationSourceTypeHelm {
-		if st, set := app.Annotations[common.WriteBackTargetAnnotation]; set &&
-			strings.HasPrefix(st, common.HelmValuesPrefix) {
-			return ApplicationTypeHelmValues
-		}
 		return ApplicationTypeHelm
 	} else {
 		return ApplicationTypeUnsupported

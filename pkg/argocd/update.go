@@ -558,7 +558,7 @@ func getWriteBackConfig(app *v1alpha1.Application, kubeClient *kube.KubernetesCl
 	switch strings.TrimSpace(method) {
 	case "git":
 		wbc.Method = WriteBackGit
-		if target, ok := app.Annotations[common.WriteBackTargetAnnotation]; ok && (strings.HasPrefix(target, common.TemplatePrefix) || strings.HasPrefix(target, common.KustomizationPrefix) || strings.HasPrefix(target, common.HelmPrefix) || strings.HasPrefix(target, common.HelmValuesPrefix)) {
+		if target, ok := app.Annotations[common.WriteBackTargetAnnotation]; ok && (strings.HasPrefix(target, common.TemplatePrefix) || strings.HasPrefix(target, common.KustomizationPrefix) || strings.HasPrefix(target, common.HelmPrefix)) {
 			wbc.TargetBase, wbc.TargetType = parseTarget(target, app.Spec.Source.Path)
 			if wbc.TargetType == WriteBackTargetKustomization {
 				wbc.TargetChangeWriter = writeKustomization
@@ -591,9 +591,6 @@ func parseTarget(target string, sourcePath string) (base string, targetType Writ
 	} else if strings.HasPrefix(target, common.HelmPrefix) {
 		targetType = WriteBackTargetHelm
 		targetLen = len(common.HelmPrefix)
-	} else if strings.HasPrefix(target, common.HelmValuesPrefix) {
-		targetType = WriteBackTargetHelmValues
-		targetLen = len(common.HelmValuesPrefix)
 	} else if strings.HasPrefix(target, common.TemplatePrefix) {
 		targetType = WriteBackTargetTemplateValues
 		targetLen = len(common.TemplatePrefix)
