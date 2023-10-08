@@ -187,7 +187,7 @@ func UpdateApplication(updateConf *UpdateConfiguration, state *SyncIterationStat
 	for i, applicationImage := range updateConf.UpdateApp.Images {
 		updateableImage := applicationImages.ContainsImage(applicationImage, false)
 		if updateableImage == nil {
-			log.WithContext().AddField("application", app).Debugf("Image '%s' seems not to be live in this application, skipping", applicationImage.ImageName)
+			log.WithContext().Debugf("Image '%s' seems not to be live in this application, skipping", applicationImage.ImageName)
 			result.NumSkipped += 1
 			continue
 		}
@@ -202,7 +202,6 @@ func UpdateApplication(updateConf *UpdateConfiguration, state *SyncIterationStat
 		result.NumImagesConsidered += 1
 
 		imgCtx := log.WithContext().
-			AddField("application", app).
 			AddField("registry", updateableImage.RegistryURL).
 			AddField("image_name", updateableImage.ImageName).
 			AddField("image_tag", updateableImage.ImageTag).
@@ -235,7 +234,7 @@ func UpdateApplication(updateConf *UpdateConfiguration, state *SyncIterationStat
 		vc.Options = applicationImage.
 			GetPlatformOptions(updateConf.UpdateApp.Application.Annotations, updateConf.IgnorePlatforms).
 			WithMetadata(vc.Strategy.NeedsMetadata()).
-			WithLogger(imgCtx.AddField("application", app))
+			WithLogger(imgCtx)
 
 		// If a strategy needs meta-data and tagsortmode is set for the
 		// registry, let the user know.
