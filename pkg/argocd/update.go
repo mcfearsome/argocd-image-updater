@@ -399,7 +399,6 @@ func needsUpdate(updateableImage *image.ContainerImage, applicationImage *image.
 func setAppImage(app *v1alpha1.Application, img *image.ContainerImage, index int) error {
 	var err error
 	logCtx := log.WithContext().
-			AddField("application", app).
 			AddField("image", img).
 			AddField("index", index).
 			AddField("image_tag", img.ImageTag).
