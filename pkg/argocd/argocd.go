@@ -551,7 +551,6 @@ func SetTemplateImage(app *v1alpha1.Application, newImage *image.ContainerImage,
 		app.Annotations[common.WriteBackTemplateBuildCacheAnnotation] = ""
 	}
 	logCtx := log.WithContext().
-		AddField("application", app).
 		AddField("image", newImage).
 		AddField("index", index).
 		AddField("image_tag", newImage.ImageTag).
