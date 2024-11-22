@@ -1,11 +1,13 @@
 package argocd
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
 
 	"github.com/argoproj-labs/argocd-image-updater/pkg/common"
 	"github.com/argoproj-labs/argocd-image-updater/pkg/image"
@@ -18,6 +20,8 @@ import (
 	"github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/miracl/conflate"
 )
 
 // Kubernetes based client
@@ -82,6 +86,8 @@ const (
 	ApplicationTypeUnsupported ApplicationType = 0
 	ApplicationTypeHelm        ApplicationType = 1
 	ApplicationTypeKustomize   ApplicationType = 2
+	ApplicationTypeHelmValues  ApplicationType = 3
+	ApplicationTypeGeneric     ApplicationType = 4
 )
 
 // Basic wrapper struct for ArgoCD client options
@@ -124,6 +130,8 @@ type ApplicationImages struct {
 	Application v1alpha1.Application
 	Images      image.ContainerImageList
 }
+
+type ValuesFile map[string]interface{}
 
 // Will hold a list of applications with the images allowed to considered for
 // update.
@@ -240,6 +248,14 @@ func parseLabel(inputLabel string) (map[string]string, error) {
 		selectedLabels[fields[0]] = fields[1]
 	}
 	return selectedLabels, nil
+}
+
+func getImageValuesTemplate(annotations map[string]string) string {
+	if template, ok := annotations[common.WriteBackTemplateAnnotation]; ok {
+		return template
+	} else {
+		return common.DefaultTemplate
+	}
 }
 
 // GetApplication gets the application named appName from Argo CD API
@@ -379,6 +395,62 @@ func mergeHelmParams(src []v1alpha1.HelmParameter, merge []v1alpha1.HelmParamete
 }
 
 // SetHelmImage sets image parameters for a Helm application
+func SetHelmValuesImage(app *v1alpha1.Application, newImage *image.ContainerImage) error {
+	appName := app.GetName()
+
+	var hpImageName, hpImageTag, hpImageSpec string
+
+	hpImageSpec = newImage.GetParameterHelmImageSpec(app.Annotations)
+	hpImageName = newImage.GetParameterHelmImageName(app.Annotations)
+	hpImageTag = newImage.GetParameterHelmImageTag(app.Annotations)
+
+	if hpImageSpec == "" {
+		if hpImageName == "" {
+			hpImageName = common.DefaultHelmImageName
+		}
+		if hpImageTag == "" {
+			hpImageTag = common.DefaultHelmImageTag
+		}
+	}
+
+	log.WithContext().
+		AddField("application", appName).
+		AddField("image", newImage.GetFullNameWithoutTag()).
+		Debugf("target parameters: image-spec=%s image-name=%s, image-tag=%s", hpImageSpec, hpImageName, hpImageTag)
+
+	mergeParams := make([]v1alpha1.HelmParameter, 0)
+
+	// The logic behind this is that image-spec is an override - if this is set,
+	// we simply ignore any image-name and image-tag parameters that might be
+	// there.
+	if hpImageSpec != "" {
+		p := v1alpha1.HelmParameter{Name: hpImageSpec, Value: newImage.GetFullNameWithTag(), ForceString: true}
+		mergeParams = append(mergeParams, p)
+	} else {
+		if hpImageName != "" {
+			p := v1alpha1.HelmParameter{Name: hpImageName, Value: newImage.GetFullNameWithoutTag(), ForceString: true}
+			mergeParams = append(mergeParams, p)
+		}
+		if hpImageTag != "" {
+			p := v1alpha1.HelmParameter{Name: hpImageTag, Value: newImage.GetTagWithDigest(), ForceString: true}
+			mergeParams = append(mergeParams, p)
+		}
+	}
+
+	if app.Spec.Source.Helm == nil {
+		app.Spec.Source.Helm = &v1alpha1.ApplicationSourceHelm{}
+	}
+
+	if app.Spec.Source.Helm.Parameters == nil {
+		app.Spec.Source.Helm.Parameters = make([]v1alpha1.HelmParameter, 0)
+	}
+
+	app.Spec.Source.Helm.Parameters = mergeHelmParams(app.Spec.Source.Helm.Parameters, mergeParams)
+
+	return nil
+}
+
+// SetHelmImage sets image parameters for a Helm application
 func SetHelmImage(app *v1alpha1.Application, newImage *image.ContainerImage) error {
 	if appType := getApplicationType(app); appType != ApplicationTypeHelm {
 		return fmt.Errorf("cannot set Helm params on non-Helm application")
@@ -474,6 +546,58 @@ func SetKustomizeImage(app *v1alpha1.Application, newImage *image.ContainerImage
 	return nil
 }
 
+func SetTemplateImage(app *v1alpha1.Application, newImage *image.ContainerImage, index int) error {
+	if _, ok := app.Annotations[common.WriteBackTemplateBuildCacheAnnotation]; !ok {
+		app.Annotations[common.WriteBackTemplateBuildCacheAnnotation] = ""
+	}
+	logCtx := log.WithContext().
+		AddField("image", newImage).
+		AddField("index", index).
+		AddField("image_tag", newImage.ImageTag).
+		AddField("alias", newImage.ImageAlias)
+
+	cached := []byte(app.Annotations[common.WriteBackTemplateBuildCacheAnnotation])
+
+	data := struct {
+		Index      int
+		Alias      string
+		Repository string
+		Tag        string
+	}{
+		Index:      index,
+		Alias:      newImage.ImageAlias,
+		Repository: newImage.GetFullNameWithoutTag(),
+		Tag:        newImage.ImageTag.String(),
+	}
+
+	tmpl := getImageValuesTemplate(app.Annotations)
+	logCtx.Infof("Using template:\n%s", tmpl)
+
+	var b bytes.Buffer
+
+	t := template.Must(template.New("template").Parse(tmpl))
+	err := t.Execute(&b, data)
+	if err != nil {
+		return err
+	}
+
+	c, err := conflate.FromData(cached, b.Bytes())
+	logCtx.Infof("Conflate result:\n%v", c)
+	if err != nil {
+		return err
+	}
+
+	newYaml, err := c.MarshalYAML()
+	if err != nil {
+		logCtx.Errorf("Failed to marshal YAML: %v", err)
+		return err
+	}
+
+	app.Annotations[common.WriteBackTemplateBuildCacheAnnotation] = string(newYaml)
+
+	return nil
+}
+
 // GetImagesFromApplication returns the list of known images for the given application
 func GetImagesFromApplication(app *v1alpha1.Application) image.ContainerImageList {
 	images := make(image.ContainerImageList, 0)
@@ -518,11 +642,21 @@ func IsValidApplicationType(app *v1alpha1.Application) bool {
 
 // getApplicationType returns the type of the application
 func getApplicationType(app *v1alpha1.Application) ApplicationType {
+	if st, set := app.Annotations[common.WriteBackTargetAnnotation]; set &&
+		strings.HasPrefix(st, common.TemplatePrefix) {
+		return ApplicationTypeGeneric
+	}
+
 	sourceType := app.Status.SourceType
 	if st, set := app.Annotations[common.WriteBackTargetAnnotation]; set &&
 		strings.HasPrefix(st, common.KustomizationPrefix) {
 		sourceType = v1alpha1.ApplicationSourceTypeKustomize
 	}
+	if st, set := app.Annotations[common.WriteBackTargetAnnotation]; set &&
+		strings.HasPrefix(st, common.HelmPrefix) {
+		sourceType = v1alpha1.ApplicationSourceTypeHelm
+	}
+
 	if sourceType == v1alpha1.ApplicationSourceTypeKustomize {
 		return ApplicationTypeKustomize
 	} else if sourceType == v1alpha1.ApplicationSourceTypeHelm {
@@ -538,6 +672,8 @@ func (a ApplicationType) String() string {
 	case ApplicationTypeKustomize:
 		return "Kustomize"
 	case ApplicationTypeHelm:
+		return "Helm"
+	case ApplicationTypeHelmValues:
 		return "Helm"
 	case ApplicationTypeUnsupported:
 		return "Unsupported"

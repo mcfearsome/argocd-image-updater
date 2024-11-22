@@ -11,6 +11,7 @@ import (
 
 	"github.com/argoproj-labs/argocd-image-updater/ext/git"
 	"github.com/argoproj-labs/argocd-image-updater/pkg/kube"
+	"github.com/argoproj-labs/argocd-image-updater/pkg/log"
 )
 
 // getGitCredsSource returns git credentials source that loads credentials from the secret or from Argo CD settings
@@ -31,10 +32,12 @@ func getGitCredsSource(creds string, kubeClient *kube.KubernetesClient, wbc *Wri
 // getCredsFromArgoCD loads repository credentials from Argo CD settings
 func getCredsFromArgoCD(wbc *WriteBackConfig, kubeClient *kube.KubernetesClient) (git.Creds, error) {
 	ctx, cancel := context.WithCancel(context.Background())
+	logCtx := log.WithContext()
 	defer cancel()
 
 	settingsMgr := settings.NewSettingsManager(ctx, kubeClient.Clientset, kubeClient.Namespace)
 	argocdDB := db.NewDB(kubeClient.Namespace, settingsMgr, kubeClient.Clientset)
+	logCtx.Infof("Getting repository '%s' from Argo CD settings", wbc.GitRepo)
 	repo, err := argocdDB.GetRepository(ctx, wbc.GitRepo)
 	if err != nil {
 		return nil, err
@@ -42,7 +45,10 @@ func getCredsFromArgoCD(wbc *WriteBackConfig, kubeClient *kube.KubernetesClient)
 	if !repo.HasCredentials() {
 		return nil, fmt.Errorf("credentials for '%s' are not configured in Argo CD settings", wbc.GitRepo)
 	}
-	return repo.GetGitCreds(nil), nil
+	//_creds := repo.GetGitCreds(nil)
+	creds := git.NewGitHubAppCreds(repo.GithubAppId, repo.GithubAppInstallationId, repo.GithubAppPrivateKey, repo.GitHubAppEnterpriseBaseURL, repo.Repo, repo.TLSClientCertData, repo.TLSClientCertKey, repo.IsInsecure())
+	logCtx.Infof("Got credentials for repository '%s' from Argo CD settings\n%+v", wbc.GitRepo, creds)
+	return creds, nil
 }
 
 // getCredsFromSecret loads repository credentials from secret

@@ -17,6 +17,8 @@ Currently it will only work with applications that are built using *Kustomize*
 or *Helm* tooling. Applications built from plain YAML or custom tools are not
 supported yet (and maybe never will). 
 
+Trigger
+
 ## Documentation
 
 Read
